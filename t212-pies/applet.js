@@ -39,6 +39,7 @@ Trading212Applet.prototype = {
         this._requestQueue = [];
         this._requestInFlight = false;
         this._lastRequestTime = 0;
+        this._paused = false;
 
         this._loadApiKey();
 
@@ -85,16 +86,15 @@ Trading212Applet.prototype = {
         this.menu.addMenuItem(stocksHeader);
 
         // Stocks scroll area
-        this.stocksBin = new St.BoxLayout({ vertical: true });
+        this.stocksBin = new St.BoxLayout({ vertical: true, x_expand: true });
         let stocksScroll = new St.ScrollView({
-            style: 'max-height: 250px; min-width: 380px;',
+            style: 'max-height: 250px;',
+            x_expand: true,
             hscrollbar_policy: St.PolicyType.NEVER,
             vscrollbar_policy: St.PolicyType.AUTOMATIC
         });
         stocksScroll.add_actor(this.stocksBin);
-        let stocksItem = new PopupMenu.PopupBaseMenuItem({ reactive: false });
-        stocksItem.addActor(stocksScroll, { expand: true, span: -1 });
-        this.menu.addMenuItem(stocksItem);
+        this.menu.box.add(stocksScroll, { expand: true, x_fill: true, y_fill: false });
 
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
 
@@ -104,23 +104,56 @@ Trading212Applet.prototype = {
         this.menu.addMenuItem(piesHeader);
 
         // Pies scroll area
-        this.piesBin = new St.BoxLayout({ vertical: true });
+        this.piesBin = new St.BoxLayout({ vertical: true, x_expand: true });
         let piesScroll = new St.ScrollView({
-            style: 'max-height: 250px; min-width: 380px;',
+            style: 'max-height: 250px;',
+            x_expand: true,
             hscrollbar_policy: St.PolicyType.NEVER,
             vscrollbar_policy: St.PolicyType.AUTOMATIC
         });
         piesScroll.add_actor(this.piesBin);
-        let piesItem = new PopupMenu.PopupBaseMenuItem({ reactive: false });
-        piesItem.addActor(piesScroll, { expand: true, span: -1 });
-        this.menu.addMenuItem(piesItem);
+        this.menu.box.add(piesScroll, { expand: true, x_fill: true, y_fill: false });
 
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
 
-        // Status line
-        this.statusMenuItem = new PopupMenu.PopupMenuItem("Initializing...", { reactive: false });
-        this.statusMenuItem.label.set_style("color: #888888; font-size: 0.85em;");
-        this.menu.addMenuItem(this.statusMenuItem);
+        // Portfolio summary section
+        let summaryHeader = new PopupMenu.PopupMenuItem("── PORTFOLIO SUMMARY ──", { reactive: false });
+        summaryHeader.label.set_style("font-weight: bold; color: #aaaaaa;");
+        this.menu.addMenuItem(summaryHeader);
+
+        this.summaryBin = new St.BoxLayout({ vertical: true, x_expand: true });
+        this.menu.box.add(this.summaryBin, { expand: true, x_fill: true, y_fill: false });
+
+        this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+
+        // Bottom bar: status text on the left, pause/play button on the right
+        let bottomItem = new PopupMenu.PopupBaseMenuItem({ reactive: false, style_class: '' });
+        bottomItem.actor.set_style('padding: 0;');
+        let bottomBox = new St.BoxLayout({ style: 'padding: 2px 4px;', x_expand: true });
+
+        this.statusLabel = new St.Label({
+            text: "Initializing...",
+            style: 'color: #888888; font-size: 0.85em; min-width: 200px;'
+        });
+        this.statusLabel.clutter_text.ellipsize = Pango.EllipsizeMode.END;
+        bottomBox.add_actor(this.statusLabel);
+
+        // Spacer to push button to the right
+        let spacer = new St.Widget({ x_expand: true, style: 'min-width: 20px;' });
+        bottomBox.add_actor(spacer);
+
+        this._pauseButton = new St.Button({
+            label: '⏸ Pause',
+            style: 'padding: 2px 12px; border: 1px solid #555; border-radius: 4px; font-size: 0.85em;',
+            can_focus: true,
+            reactive: true
+        });
+        this._pauseButton.connect('clicked', Lang.bind(this, this._togglePause));
+        bottomBox.add_actor(this._pauseButton);
+
+        bottomItem.addActor(bottomBox, { expand: true, span: -1 });
+        this.menu.addMenuItem(bottomItem);
+
     },
 
     _fetchData: function() {
@@ -298,19 +331,21 @@ Trading212Applet.prototype = {
 
     _makeRow: function(name, value, percent) {
         let row = new St.BoxLayout({
-            style: 'padding: 5px 10px;'
+            style: 'padding: 5px 10px;',
+            x_expand: true
         });
 
         let nameLabel = new St.Label({
             text: name,
-            style: 'min-width: 160px; max-width: 160px; font-weight: bold;'
+            style: 'font-weight: bold;',
+            x_expand: true
         });
         nameLabel.clutter_text.ellipsize = Pango.EllipsizeMode.END;
-        row.add_actor(nameLabel);
+        row.add(nameLabel, { expand: true, x_fill: true });
 
         let valueLabel = new St.Label({
             text: value,
-            style: 'min-width: 100px; text-align: right;'
+            style: 'text-align: right; min-width: 120px;'
         });
         row.add_actor(valueLabel);
 
@@ -318,7 +353,7 @@ Trading212Applet.prototype = {
         let sign = percent >= 0 ? '+' : '';
         let percentLabel = new St.Label({
             text: sign + percent.toFixed(2) + '%',
-            style: 'min-width: 80px; text-align: right; color: ' + color + ';'
+            style: 'text-align: right; min-width: 70px; color: ' + color + ';'
         });
         row.add_actor(percentLabel);
 
@@ -361,6 +396,7 @@ Trading212Applet.prototype = {
             let row = this._makeRow(ticker, this._formatPrice(currentValueCZK), percent);
             this.stocksBin.add_actor(row);
         });
+        this._updateSummaryUI();
     },
 
     _updatePiesUI: function() {
@@ -386,6 +422,103 @@ Trading212Applet.prototype = {
             let row = this._makeRow(name, this._formatPrice(totalValue), percent);
             this.piesBin.add_actor(row);
         });
+        this._updateSummaryUI();
+    },
+
+    _updateSummaryUI: function() {
+        if (!this.summaryBin) return;
+        this.summaryBin.destroy_all_children();
+
+        // --- stocks contribution ---
+        let stocksPaid = 0;
+        let stocksCurrent = 0;
+        let standaloneStocks = (this.stocksData || []).filter(s => !(s.pieQuantity > 0));
+        standaloneStocks.forEach(stock => {
+            let currentPrice = stock.currentPrice || 0;
+            let avgPrice = stock.averagePrice || 0;
+            let quantity = stock.quantity || 0;
+            let ppl = stock.ppl || 0;
+            let fxPpl = stock.fxPpl || 0;
+            let priceDiff = currentPrice - avgPrice;
+            let currentValueCZK, paidCZK;
+            if (Math.abs(priceDiff) > 0.0001 && quantity > 0) {
+                let fxRate = (ppl - fxPpl) / (priceDiff * quantity);
+                currentValueCZK = currentPrice * quantity * fxRate;
+                paidCZK = avgPrice * quantity * fxRate;
+            } else {
+                currentValueCZK = avgPrice * quantity + ppl;
+                paidCZK = avgPrice * quantity;
+            }
+            stocksCurrent += currentValueCZK;
+            stocksPaid += paidCZK;
+        });
+
+        // --- pies contribution ---
+        let piesCurrent = 0;
+        let piesPaid = 0;
+        let pieEntries = this.piesData ? Object.values(this.piesData) : [];
+        pieEntries.forEach(pie => {
+            let listResult = (pie.listData && pie.listData.result) || {};
+            let currentVal = listResult.priceAvgValue || 0;
+            let coef = listResult.priceAvgResultCoef != null ? listResult.priceAvgResultCoef : 0;
+            // currentVal = paid * (1 + coef)  =>  paid = currentVal / (1 + coef)
+            let paid = (1 + coef) !== 0 ? currentVal / (1 + coef) : currentVal;
+            piesCurrent += currentVal;
+            piesPaid += paid;
+        });
+
+        let totalPaid = stocksPaid + piesPaid;
+        let totalCurrent = stocksCurrent + piesCurrent;
+        let totalPercent = totalPaid > 0 ? ((totalCurrent - totalPaid) / totalPaid * 100) : 0;
+
+        // Row: label | paid CZK | current CZK | overall %
+        let row = new St.BoxLayout({ style: 'padding: 5px 10px;', x_expand: true });
+
+        let lbl = new St.Label({
+            text: 'Total',
+            style: 'font-weight: bold;',
+            x_expand: true
+        });
+        row.add(lbl, { expand: true, x_fill: true });
+
+        let paidLbl = new St.Label({
+            text: 'Paid: ' + this._formatPrice(totalPaid) + ' CZK',
+            style: 'text-align: right; color: #aaaaaa; min-width: 140px;'
+        });
+        row.add_actor(paidLbl);
+
+        let currentLbl = new St.Label({
+            text: 'Now: ' + this._formatPrice(totalCurrent) + ' CZK',
+            style: 'text-align: right; min-width: 140px;'
+        });
+        row.add_actor(currentLbl);
+
+        let color = totalPercent >= 0 ? '#4CAF50' : '#F44336';
+        let sign = totalPercent >= 0 ? '+' : '';
+        let percentLbl = new St.Label({
+            text: sign + totalPercent.toFixed(2) + '%',
+            style: 'text-align: right; min-width: 70px; color: ' + color + ';'
+        });
+        row.add_actor(percentLbl);
+
+        this.summaryBin.add_actor(row);
+    },
+
+    _togglePause: function() {
+        this._paused = !this._paused;
+        if (this._paused) {
+            this._pauseButton.set_label('▶ Resume');
+            if (this._timeoutId) {
+                Mainloop.source_remove(this._timeoutId);
+                this._timeoutId = null;
+            }
+            this._requestQueue = [];
+            this._updateStatus("Paused");
+        } else {
+            this._pauseButton.set_label('⏸ Pause');
+            this._fetchData();
+            this._setupAutoRefresh();
+        }
     },
 
     _setupAutoRefresh: function() {
@@ -393,14 +526,16 @@ Trading212Applet.prototype = {
             Mainloop.source_remove(this._timeoutId);
         }
         this._timeoutId = Mainloop.timeout_add_seconds(REFRESH_INTERVAL, Lang.bind(this, function() {
-            this._fetchData();
+            if (!this._paused) {
+                this._fetchData();
+            }
             return true;
         }));
     },
 
     _updateStatus: function(text) {
-        if (this.statusMenuItem) {
-            this.statusMenuItem.label.set_text(text);
+        if (this.statusLabel) {
+            this.statusLabel.set_text(text);
         }
     },
 
