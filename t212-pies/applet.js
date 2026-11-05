@@ -42,8 +42,9 @@ Trading212Applet.prototype = {
         } catch(e) {
             this.set_applet_icon_symbolic_name("view-statistics-symbolic");
         }
-        this.set_applet_label("T212 applet");
-        this.set_applet_tooltip("Trading 212 Monitor");
+        let appletName = (metadata && metadata.name) || "Trading 212";
+        this.set_applet_label(appletName);
+        this.set_applet_tooltip(appletName);
 
         this.apiKey = null;
         this.httpSession = new Soup.Session();
@@ -55,6 +56,7 @@ Trading212Applet.prototype = {
         this._requestInFlight = false;
         this._lastRequestTime = 0;
         this._paused = false;
+        this._hideAmounts = false;
 
         this._loadApiKey();
 
@@ -231,6 +233,24 @@ Trading212Applet.prototype = {
         });
         this.statusLabel.clutter_text.ellipsize = Pango.EllipsizeMode.END;
         bottomBin.add(this.statusLabel, { expand: true, x_fill: true });
+
+        // Toggle visibility button (hide/show amounts)
+        let hideAmountsLabel = new St.Label({
+            text: this._hideAmounts ? '👁 Show' : '👁 Hide',
+            style: 'font-size: 0.8em; color: ' + COLORS.primary + ';',
+            y_align: St.Align.MIDDLE
+        });
+        this._hideAmountsButton = new St.Button({
+            child: hideAmountsLabel,
+            style: 'padding: 3px 8px; border: 1px solid rgba(255,255,255,0.15); border-radius: 4px; ' +
+                   'background-color: rgba(255,255,255,0.06); margin-right: 4px;',
+            can_focus: true,
+            reactive: true,
+            y_align: St.Align.MIDDLE
+        });
+        this._hideAmountsButton.connect('clicked', Lang.bind(this, this._toggleHideAmounts));
+        this._hideAmountsLabel = hideAmountsLabel;
+        bottomBin.add_actor(this._hideAmountsButton);
 
         // Refresh button
         let refreshLabel = new St.Label({
@@ -694,12 +714,15 @@ Trading212Applet.prototype = {
                 
                 let subtext = ticker;
                 if (paidCZK > 0) {
-                    subtext += ' • Paid: ' + this._formatPrice(paidCZK) + ' CZK';
+                    let paidStr = this._hideAmounts ? '••••' : this._formatPrice(paidCZK);
+                    subtext += ' • Paid: ' + paidStr + ' CZK';
                 }
+
+                let valueStr = this._hideAmounts ? '••••' : this._formatPrice(currentValueCZK);
 
                 items.push({
                     name: name,
-                    value: this._formatPrice(currentValueCZK),
+                    value: valueStr,
                     percent: percent,
                     subtext: subtext
                 });
@@ -741,15 +764,18 @@ Trading212Applet.prototype = {
                     subtext = count + (count === 1 ? ' instrument' : ' instruments');
                 }
                 if (paid > 0) {
-                    subtext = (subtext ? subtext + ' • ' : '') + 'Paid: ' + this._formatPrice(paid) + ' CZK';
+                    let paidStr = this._hideAmounts ? '••••' : this._formatPrice(paid);
+                    subtext = (subtext ? subtext + ' • ' : '') + 'Paid: ' + paidStr + ' CZK';
                 }
                 if (!subtext) {
                     subtext = 'Pie Portfolio';
                 }
 
+                let valueStr = this._hideAmounts ? '••••' : this._formatPrice(totalValue);
+
                 items.push({
                     name: name,
-                    value: this._formatPrice(totalValue),
+                    value: valueStr,
                     percent: percent,
                     subtext: subtext
                 });
@@ -804,7 +830,8 @@ Trading212Applet.prototype = {
             let stocksPpl = stocksCurrent - stocksPaid;
             let stocksPercent = stocksPaid > 0 ? (stocksPpl / stocksPaid * 100) : 0;
             let sign = stocksPercent >= 0 ? '+' : '';
-            this.stocksSubtotalLabel.set_text(this._formatPrice(stocksCurrent) + ' CZK (' + sign + stocksPercent.toFixed(1) + '%)');
+            let stocksValStr = this._hideAmounts ? '••••' : this._formatPrice(stocksCurrent);
+            this.stocksSubtotalLabel.set_text(stocksValStr + ' CZK (' + sign + stocksPercent.toFixed(1) + '%)');
         }
 
         if (this.piesCountLabel) {
@@ -814,7 +841,8 @@ Trading212Applet.prototype = {
             let piesPpl = piesCurrent - piesPaid;
             let piesPercent = piesPaid > 0 ? (piesPpl / piesPaid * 100) : 0;
             let sign = piesPercent >= 0 ? '+' : '';
-            this.piesSubtotalLabel.set_text(this._formatPrice(piesCurrent) + ' CZK (' + sign + piesPercent.toFixed(1) + '%)');
+            let piesValStr = this._hideAmounts ? '••••' : this._formatPrice(piesCurrent);
+            this.piesSubtotalLabel.set_text(piesValStr + ' CZK (' + sign + piesPercent.toFixed(1) + '%)');
         }
 
         // Summary banner card at the top
@@ -856,8 +884,9 @@ Trading212Applet.prototype = {
         let balanceRow = new St.BoxLayout({ x_expand: true, y_align: St.Align.MIDDLE });
         banner.add_actor(balanceRow);
 
+        let balanceStr = this._hideAmounts ? '••••' : this._formatPrice(totalCurrent);
         let balanceLabel = new St.Label({
-            text: this._formatPrice(totalCurrent) + ' CZK',
+            text: balanceStr + ' CZK',
             style: 'font-weight: bold; font-size: 1.35em; color: ' + COLORS.primary + ';',
             x_expand: true,
             y_align: St.Align.MIDDLE
@@ -873,8 +902,9 @@ Trading212Applet.prototype = {
         banner.add_actor(bottomRow);
 
         let pplSign = totalProfitLoss >= 0 ? '+' : '';
+        let pplStr = this._hideAmounts ? '••••' : (pplSign + this._formatPrice(totalProfitLoss));
         let pplLabel = new St.Label({
-            text: pplSign + this._formatPrice(totalProfitLoss) + ' CZK',
+            text: pplStr + ' CZK',
             style: 'color: ' + color + '; font-weight: 600; font-size: 0.85em;',
             y_align: St.Align.MIDDLE
         });
@@ -887,8 +917,9 @@ Trading212Applet.prototype = {
         });
         bottomRow.add_actor(dotSpacer);
 
+        let paidStr = this._hideAmounts ? '••••' : this._formatPrice(totalPaid);
         let paidLabel = new St.Label({
-            text: 'Invested: ' + this._formatPrice(totalPaid) + ' CZK',
+            text: 'Invested: ' + paidStr + ' CZK',
             style: 'color: ' + COLORS.secondary + '; font-size: 0.85em;',
             x_expand: true,
             y_align: St.Align.MIDDLE
@@ -897,12 +928,19 @@ Trading212Applet.prototype = {
 
         this.summaryBin.add_actor(banner);
 
-        // Update panel applet label with portfolio total
-        this.set_applet_label(this._formatPrice(totalCurrent) + ' (' + sign + totalPercent.toFixed(1) + '%)');
-        this.set_applet_tooltip('Trading 212 Portfolio\n' +
-                                'Current: ' + this._formatPrice(totalCurrent) + ' CZK\n' +
-                                'Invested: ' + this._formatPrice(totalPaid) + ' CZK\n' +
-                                'Return: ' + pplSign + this._formatPrice(totalProfitLoss) + ' CZK (' + sign + totalPercent.toFixed(2) + '%)');
+        // Keep applet label as a suitable name for privacy before opening
+        let appletName = (this._meta && this._meta.name) || "Trading 212";
+        this.set_applet_label(appletName);
+        this.set_applet_tooltip(appletName);
+    },
+
+    _toggleHideAmounts: function() {
+        this._hideAmounts = !this._hideAmounts;
+        if (this._hideAmountsLabel) {
+            this._hideAmountsLabel.set_text(this._hideAmounts ? '👁 Show' : '👁 Hide');
+        }
+        this._updateStocksUI();
+        this._updatePiesUI();
     },
 
     _togglePause: function() {
